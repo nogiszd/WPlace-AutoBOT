@@ -117,17 +117,11 @@
   };
 
   const updateBoundaries = (minX, maxX, minY, maxY) => {
-    // Validate boundaries
-    const validMinX = Math.max(0, Math.min(minX, CONFIG.PIXELS_PER_LINE - 1));
-    const validMaxX = Math.max(
-      validMinX + 1,
-      Math.min(maxX, CONFIG.PIXELS_PER_LINE - 1)
-    );
-    const validMinY = Math.max(0, Math.min(minY, CONFIG.PIXELS_PER_LINE - 1));
-    const validMaxY = Math.max(
-      validMinY + 1,
-      Math.min(maxY, CONFIG.PIXELS_PER_LINE - 1)
-    );
+    // Allow any boundary values, just ensure min < max
+    const validMinX = Math.min(minX, maxX);
+    const validMaxX = Math.max(minX, maxX);
+    const validMinY = Math.min(minY, maxY);
+    const validMaxY = Math.max(minY, maxY);
 
     state.boundaries = {
       minX: validMinX,
@@ -652,34 +646,34 @@
              </label>
            </div>
            
-           <div id="boundaryInputs" class="wplace-boundaries-grid" style="display: ${
-             state.useCustomBoundaries ? "grid" : "none"
-           };">
-             <div class="wplace-boundary-input">
-               <label>${t.minX}</label>
-               <input type="number" id="minXInput" min="0" max="99" value="${
-                 state.boundaries.minX
-               }">
-             </div>
-             <div class="wplace-boundary-input">
-               <label>${t.maxX}</label>
-               <input type="number" id="maxXInput" min="0" max="99" value="${
-                 state.boundaries.maxX
-               }">
-             </div>
-             <div class="wplace-boundary-input">
-               <label>${t.minY}</label>
-               <input type="number" id="minYInput" min="0" max="99" value="${
-                 state.boundaries.minY
-               }">
-             </div>
-             <div class="wplace-boundary-input">
-               <label>${t.maxY}</label>
-               <input type="number" id="maxYInput" min="0" max="99" value="${
-                 state.boundaries.maxY
-               }">
-             </div>
-           </div>
+                       <div id="boundaryInputs" class="wplace-boundaries-grid" style="display: ${
+                         state.useCustomBoundaries ? "grid" : "none"
+                       };">
+              <div class="wplace-boundary-input">
+                <label>${t.minX}</label>
+                <input type="number" id="minXInput" value="${
+                  state.boundaries.minX
+                }">
+              </div>
+              <div class="wplace-boundary-input">
+                <label>${t.maxX}</label>
+                <input type="number" id="maxXInput" value="${
+                  state.boundaries.maxX
+                }">
+              </div>
+              <div class="wplace-boundary-input">
+                <label>${t.minY}</label>
+                <input type="number" id="minYInput" value="${
+                  state.boundaries.minY
+                }">
+              </div>
+              <div class="wplace-boundary-input">
+                <label>${t.maxY}</label>
+                <input type="number" id="maxYInput" value="${
+                  state.boundaries.maxY
+                }">
+              </div>
+            </div>
            
            <div id="boundaryControls" class="wplace-boundaries-controls" style="display: ${
              state.useCustomBoundaries ? "flex" : "none"
@@ -694,11 +688,11 @@
              </button>
            </div>
            
-           <div id="defaultBoundariesInfo" style="display: ${
-             state.useCustomBoundaries ? "none" : "block"
-           }; text-align: center; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; font-size: 12px; opacity: 0.8;">
-             ${t.defaultBoundaries}: X(0-99) Y(0-99)
-           </div>
+                       <div id="defaultBoundariesInfo" style="display: ${
+                         state.useCustomBoundaries ? "none" : "block"
+                       }; text-align: center; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; font-size: 12px; opacity: 0.8;">
+              ${t.defaultBoundaries}: Full canvas coverage
+            </div>
          </div>
         
         <div class="wplace-stats">
@@ -849,9 +843,9 @@
 
     applyBoundariesBtn.addEventListener("click", () => {
       const minX = parseInt(minXInput.value) || 0;
-      const maxX = parseInt(maxXInput.value) || 99;
+      const maxX = parseInt(maxXInput.value) || 0;
       const minY = parseInt(minYInput.value) || 0;
-      const maxY = parseInt(maxYInput.value) || 99;
+      const maxY = parseInt(maxYInput.value) || 0;
 
       const newBoundaries = updateBoundaries(minX, maxX, minY, maxY);
 
@@ -960,16 +954,16 @@
           }</div>
           <div>${state.userInfo?.level || "0"}</div>
         </div>
-        <div class="wplace-stat-item">
-          <div class="wplace-stat-label"><i class="fas fa-crop-alt"></i> ${
-            t.boundaries
-          }</div>
-          <div>${
-            state.useCustomBoundaries
-              ? `X:${state.boundaries.minX}-${state.boundaries.maxX} Y:${state.boundaries.minY}-${state.boundaries.maxY}`
-              : "Default (0-99, 0-99)"
-          }</div>
-        </div>
+                 <div class="wplace-stat-item">
+           <div class="wplace-stat-label"><i class="fas fa-crop-alt"></i> ${
+             t.boundaries
+           }</div>
+           <div>${
+             state.useCustomBoundaries
+               ? `X:${state.boundaries.minX}-${state.boundaries.maxX} Y:${state.boundaries.minY}-${state.boundaries.maxY}`
+               : "Full canvas"
+           }</div>
+         </div>
       `;
     }
   };
