@@ -4,13 +4,6 @@
     START_Y: 1148,
     PIXELS_PER_LINE: 100,
     DELAY: 1000,
-    // Boundary controls for pixel placement
-    BOUNDARIES: {
-      MIN_X: 0,
-      MAX_X: 99,
-      MIN_Y: 0,
-      MAX_Y: 99,
-    },
     THEME: {
       primary: "#000000",
       secondary: "#111111",
@@ -33,14 +26,14 @@
     language: "en",
     autoRefresh: true,
     pausedForManual: false,
-    // Boundary state
-    boundaries: {
-      minX: CONFIG.BOUNDARIES.MIN_X,
-      maxX: CONFIG.BOUNDARIES.MAX_X,
-      minY: CONFIG.BOUNDARIES.MIN_Y,
-      maxY: CONFIG.BOUNDARIES.MAX_Y,
+    // Coordinate capture state
+    selectingCoordinates: false,
+    capturingLeftUpper: false,
+    capturingRightBottom: false,
+    capturedCoords: {
+      leftUpper: null,
+      rightBottom: null,
     },
-    useCustomBoundaries: false,
   };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -78,6 +71,56 @@
             paintLoop();
           }
         }
+
+        // Capture coordinates if we're in coordinate selection mode
+        if (
+          state.selectingCoordinates &&
+          payload.coords &&
+          Array.isArray(payload.coords)
+        ) {
+          const regionMatch = url.match(/\/pixel\/(\d+)\/(\d+)/);
+          if (regionMatch && regionMatch.length >= 3) {
+            const regionX = Number.parseInt(regionMatch[1]);
+            const regionY = Number.parseInt(regionMatch[2]);
+            const pixelX = payload.coords[0];
+            const pixelY = payload.coords[1];
+
+            // Calculate absolute coordinates
+            const absoluteX = regionX * 1000 + pixelX;
+            const absoluteY = regionY * 1000 + pixelY;
+
+            console.log(
+              `📍 Coordinates captured: X=${absoluteX}, Y=${absoluteY} (Region: ${regionX},${regionY}, Pixel: ${pixelX},${pixelY})`
+            );
+
+            // Store the coordinates based on which button was clicked
+            if (state.capturingLeftUpper) {
+              state.capturedCoords.leftUpper = { x: absoluteX, y: absoluteY };
+              updateUI(
+                state.language === "pt"
+                  ? `✅ Canto superior esquerdo capturado: X=${absoluteX}, Y=${absoluteY}`
+                  : `✅ Left upper corner captured: X=${absoluteX}, Y=${absoluteY}`,
+                "success"
+              );
+            } else if (state.capturingRightBottom) {
+              state.capturedCoords.rightBottom = { x: absoluteX, y: absoluteY };
+              updateUI(
+                state.language === "pt"
+                  ? `✅ Canto inferior direito capturado: X=${absoluteX}, Y=${absoluteY}`
+                  : `✅ Right bottom corner captured: X=${absoluteX}, Y=${absoluteY}`,
+                "success"
+              );
+            }
+
+            // Auto-fill boundary inputs if both coordinates are captured
+            if (
+              state.capturedCoords.leftUpper &&
+              state.capturedCoords.rightBottom
+            ) {
+              autoFillBoundaries();
+            }
+          }
+        }
       } catch (e) {}
     }
     return originalFetch(url, options);
@@ -96,19 +139,24 @@
   };
 
   const getRandomPosition = () => {
-    if (state.useCustomBoundaries) {
+    // Check if we have captured coordinates for custom area
+    if (state.capturedCoords.leftUpper && state.capturedCoords.rightBottom) {
+      const leftUpper = state.capturedCoords.leftUpper;
+      const rightBottom = state.capturedCoords.rightBottom;
+
+      // Calculate the area dimensions
+      const minX = Math.min(leftUpper.x, rightBottom.x);
+      const maxX = Math.max(leftUpper.x, rightBottom.x);
+      const minY = Math.min(leftUpper.y, rightBottom.y);
+      const maxY = Math.max(leftUpper.y, rightBottom.y);
+
+      // Generate random position within the captured area
       return {
-        x:
-          Math.floor(
-            Math.random() * (state.boundaries.maxX - state.boundaries.minX + 1)
-          ) + state.boundaries.minX,
-        y:
-          Math.floor(
-            Math.random() * (state.boundaries.maxY - state.boundaries.minY + 1)
-          ) + state.boundaries.minY,
+        x: Math.floor(Math.random() * (maxX - minX + 1)) + minX,
+        y: Math.floor(Math.random() * (maxY - minY + 1)) + minY,
       };
     } else {
-      // Use default boundaries (full canvas)
+      // Use default method: random within 100x100 area
       return {
         x: Math.floor(Math.random() * CONFIG.PIXELS_PER_LINE),
         y: Math.floor(Math.random() * CONFIG.PIXELS_PER_LINE),
@@ -116,21 +164,117 @@
     }
   };
 
-  const updateBoundaries = (minX, maxX, minY, maxY) => {
-    // Allow any boundary values, just ensure min < max
-    const validMinX = Math.min(minX, maxX);
-    const validMaxX = Math.max(minX, maxX);
-    const validMinY = Math.min(minY, maxY);
-    const validMaxY = Math.max(minY, maxY);
+  const startCoordinateCapture = (corner) => {
+    if (state.selectingCoordinates) {
+      updateUI(
+        state.language === "pt"
+          ? "❌ Já capturando coordenadas. Aguarde..."
+          : "❌ Already capturing coordinates. Please wait...",
+        "error"
+      );
+      return;
+    }
 
-    state.boundaries = {
-      minX: validMinX,
-      maxX: validMaxX,
-      minY: validMinY,
-      maxY: validMaxY,
-    };
+    state.selectingCoordinates = true;
+    if (corner === "leftUpper") {
+      state.capturingLeftUpper = true;
+      state.capturingRightBottom = false;
+      updateUI(
+        state.language === "pt"
+          ? "📍 Clique em qualquer pixel para capturar o canto superior esquerdo..."
+          : "📍 Click any pixel to capture left upper corner...",
+        "default"
+      );
+    } else if (corner === "rightBottom") {
+      state.capturingRightBottom = true;
+      state.capturingLeftUpper = false;
+      updateUI(
+        state.language === "pt"
+          ? "📍 Clique em qualquer pixel para capturar o canto inferior direito..."
+          : "📍 Click any pixel to capture right bottom corner...",
+        "default"
+      );
+    }
 
-    return state.boundaries;
+    // Set a timeout to stop coordinate capture
+    setTimeout(() => {
+      if (state.selectingCoordinates) {
+        state.selectingCoordinates = false;
+        state.capturingLeftUpper = false;
+        state.capturingRightBottom = false;
+        updateUI(
+          state.language === "pt"
+            ? "⏰ Tempo esgotado para captura de coordenadas"
+            : "⏰ Timeout for coordinate capture",
+          "error"
+        );
+      }
+    }, 60000); // 1 minute timeout
+  };
+
+  const autoFillBoundaries = () => {
+    if (!state.capturedCoords.leftUpper || !state.capturedCoords.rightBottom) {
+      return;
+    }
+
+    const leftUpper = state.capturedCoords.leftUpper;
+    const rightBottom = state.capturedCoords.rightBottom;
+
+    // Calculate area dimensions
+    const minX = Math.min(leftUpper.x, rightBottom.x);
+    const maxX = Math.max(leftUpper.x, rightBottom.x);
+    const minY = Math.min(leftUpper.y, rightBottom.y);
+    const maxY = Math.max(leftUpper.y, rightBottom.y);
+
+    updateUI(
+      state.language === "pt"
+        ? `✅ Área de pintura definida: X(${minX}-${maxX}) Y(${minY}-${maxY})`
+        : `✅ Painting area defined: X(${minX}-${maxX}) Y(${minY}-${maxY})`,
+      "success"
+    );
+
+    // Reset coordinate capture state
+    state.selectingCoordinates = false;
+    state.capturingLeftUpper = false;
+    state.capturingRightBottom = false;
+
+    // Update the coordinate info display
+    updateCoordinateInfo();
+  };
+
+  const resetCoordinates = () => {
+    state.capturedCoords.leftUpper = null;
+    state.capturedCoords.rightBottom = null;
+
+    updateUI(
+      state.language === "pt"
+        ? "🔄 Coordenadas resetadas para padrão (100x100)"
+        : "🔄 Coordinates reset to default (100x100)",
+      "default"
+    );
+
+    // Update the coordinate info display
+    updateCoordinateInfo();
+  };
+
+  const updateCoordinateInfo = () => {
+    const coordinateInfo = document.querySelector("#coordinateInfo");
+    if (coordinateInfo) {
+      if (state.capturedCoords.leftUpper && state.capturedCoords.rightBottom) {
+        const leftUpper = state.capturedCoords.leftUpper;
+        const rightBottom = state.capturedCoords.rightBottom;
+        const minX = Math.min(leftUpper.x, rightBottom.x);
+        const maxX = Math.max(leftUpper.x, rightBottom.x);
+        const minY = Math.min(leftUpper.y, rightBottom.y);
+        const maxY = Math.max(leftUpper.y, rightBottom.y);
+
+        coordinateInfo.innerHTML = `${
+          state.language === "pt" ? "Área de Pintura" : "Painting Area"
+        }: X(${minX}-${maxX}) Y(${minY}-${maxY})`;
+      } else {
+        coordinateInfo.innerHTML = "Default: Random 100x100 area";
+      }
+    }
   };
 
   const paintPixel = async (x, y) => {
@@ -456,58 +600,6 @@
         background: ${CONFIG.THEME.error};
         color: white;
       }
-      .wplace-boundaries {
-        background: ${CONFIG.THEME.secondary};
-        padding: 12px;
-        border-radius: 6px;
-        margin-bottom: 15px;
-      }
-      .wplace-boundaries-header {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 10px;
-        font-weight: 600;
-        color: ${CONFIG.THEME.highlight};
-      }
-      .wplace-boundaries-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
-        margin-bottom: 10px;
-      }
-      .wplace-boundary-input {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-      .wplace-boundary-input label {
-        font-size: 12px;
-        opacity: 0.8;
-        font-weight: 500;
-      }
-      .wplace-boundary-input input {
-        padding: 6px 8px;
-        border: 1px solid ${CONFIG.THEME.accent};
-        border-radius: 4px;
-        background: ${CONFIG.THEME.primary};
-        color: ${CONFIG.THEME.text};
-        font-size: 12px;
-        width: 100%;
-      }
-      .wplace-boundary-input input:focus {
-        outline: none;
-        border-color: ${CONFIG.THEME.highlight};
-      }
-      .wplace-boundaries-controls {
-        display: flex;
-        gap: 8px;
-      }
-      .wplace-boundaries-controls .wplace-btn {
-        flex: 1;
-        padding: 8px;
-        font-size: 12px;
-      }
       .wplace-stats {
         background: ${CONFIG.THEME.secondary};
         padding: 12px;
@@ -552,6 +644,27 @@
         pointer-events: none;
         border-radius: 8px;
       }
+      .wplace-coordinates {
+        background: ${CONFIG.THEME.secondary};
+        padding: 12px;
+        border-radius: 6px;
+        margin-bottom: 15px;
+      }
+      .wplace-coordinates-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+        font-weight: 600;
+        color: ${CONFIG.THEME.highlight};
+      }
+      .wplace-coordinate-capture {
+        margin-bottom: 15px;
+      }
+      .wplace-coordinate-capture .wplace-btn {
+        padding: 8px;
+        font-size: 12px;
+      }
     `;
     document.head.appendChild(style);
 
@@ -565,15 +678,11 @@
         pixels: "Pixels",
         charges: "Cargas",
         level: "Level",
-        boundaries: "Limites",
-        customBoundaries: "Limites Personalizados",
-        defaultBoundaries: "Limites Padrão",
-        minX: "Min X",
-        maxX: "Max X",
-        minY: "Min Y",
-        maxY: "Max Y",
-        apply: "Aplicar",
-        reset: "Reset",
+        captureLeftUpper: "Capturar Canto Superior Esquerdo",
+        captureRightBottom: "Capturar Canto Inferior Direito",
+        coordinateCapture: "Captura de Coordenadas",
+        resetCoordinates: "Resetar Coordenadas",
+        paintingArea: "Área de Pintura",
       },
       en: {
         title: "WPlace Auto-Farm",
@@ -584,15 +693,11 @@
         pixels: "Pixels",
         charges: "Charges",
         level: "Level",
-        boundaries: "Boundaries",
-        customBoundaries: "Custom Boundaries",
-        defaultBoundaries: "Default Boundaries",
-        minX: "Min X",
-        maxX: "Max X",
-        minY: "Min Y",
-        maxY: "Max Y",
-        apply: "Apply",
-        reset: "Reset",
+        captureLeftUpper: "Capture Left Upper Corner",
+        captureRightBottom: "Capture Right Bottom Corner",
+        coordinateCapture: "Coordinate Capture",
+        resetCoordinates: "Reset Coordinates",
+        paintingArea: "Painting Area",
       },
     };
 
@@ -629,71 +734,49 @@
           </label>
         </div>
         
-                 <div class="wplace-boundaries">
-           <div class="wplace-boundaries-header">
-             <i class="fas fa-crop-alt"></i>
-             <span>${t.boundaries}</span>
-           </div>
-           
-           <div class="wplace-boundaries-toggle" style="margin-bottom: 12px;">
-             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-               <input type="checkbox" id="customBoundariesCheckbox" ${
-                 state.useCustomBoundaries ? "checked" : ""
-               } style="margin: 0;">
-               <span style="font-size: 13px; font-weight: 500;">${
-                 t.customBoundaries
-               }</span>
-             </label>
-           </div>
-           
-                       <div id="boundaryInputs" class="wplace-boundaries-grid" style="display: ${
-                         state.useCustomBoundaries ? "grid" : "none"
-                       };">
-              <div class="wplace-boundary-input">
-                <label>${t.minX}</label>
-                <input type="number" id="minXInput" value="${
-                  state.boundaries.minX
-                }">
-              </div>
-              <div class="wplace-boundary-input">
-                <label>${t.maxX}</label>
-                <input type="number" id="maxXInput" value="${
-                  state.boundaries.maxX
-                }">
-              </div>
-              <div class="wplace-boundary-input">
-                <label>${t.minY}</label>
-                <input type="number" id="minYInput" value="${
-                  state.boundaries.minY
-                }">
-              </div>
-              <div class="wplace-boundary-input">
-                <label>${t.maxY}</label>
-                <input type="number" id="maxYInput" value="${
-                  state.boundaries.maxY
-                }">
-              </div>
+        <div class="wplace-coordinates">
+          <div class="wplace-coordinates-header">
+            <i class="fas fa-crosshairs"></i>
+            <span>${t.coordinateCapture}</span>
+          </div>
+          
+          <div class="wplace-coordinate-capture" style="margin-bottom: 15px;">
+            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+              <button id="captureLeftUpperBtn" class="wplace-btn" style="flex: 1; padding: 8px; font-size: 12px;">
+                <i class="fas fa-arrow-up-left"></i>
+                <span>${t.captureLeftUpper}</span>
+              </button>
+              <button id="captureRightBottomBtn" class="wplace-btn" style="flex: 1; padding: 8px; font-size: 12px;">
+                <i class="fas fa-arrow-down-right"></i>
+                <span>${t.captureRightBottom}</span>
+              </button>
             </div>
-           
-           <div id="boundaryControls" class="wplace-boundaries-controls" style="display: ${
-             state.useCustomBoundaries ? "flex" : "none"
-           };">
-             <button id="applyBoundariesBtn" class="wplace-btn wplace-btn-primary">
-               <i class="fas fa-check"></i>
-               <span>${t.apply}</span>
-             </button>
-             <button id="resetBoundariesBtn" class="wplace-btn">
-               <i class="fas fa-undo"></i>
-               <span>${t.reset}</span>
-             </button>
-           </div>
-           
-                       <div id="defaultBoundariesInfo" style="display: ${
-                         state.useCustomBoundaries ? "none" : "block"
-                       }; text-align: center; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; font-size: 12px; opacity: 0.8;">
-              ${t.defaultBoundaries}: Full canvas coverage
-            </div>
-         </div>
+            <button id="resetCoordinatesBtn" class="wplace-btn" style="width: 100%; padding: 8px; font-size: 12px;">
+              <i class="fas fa-undo"></i>
+              <span>${t.resetCoordinates}</span>
+            </button>
+          </div>
+          
+          <div id="coordinateInfo" style="text-align: center; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; font-size: 12px; opacity: 0.8;">
+            ${
+              state.capturedCoords.leftUpper && state.capturedCoords.rightBottom
+                ? `${t.paintingArea}: X(${Math.min(
+                    state.capturedCoords.leftUpper.x,
+                    state.capturedCoords.rightBottom.x
+                  )}-${Math.max(
+                    state.capturedCoords.leftUpper.x,
+                    state.capturedCoords.rightBottom.x
+                  )}) Y(${Math.min(
+                    state.capturedCoords.leftUpper.y,
+                    state.capturedCoords.rightBottom.y
+                  )}-${Math.max(
+                    state.capturedCoords.leftUpper.y,
+                    state.capturedCoords.rightBottom.y
+                  )})`
+                : "Default: Random 100x100 area"
+            }
+          </div>
+        </div>
         
         <div class="wplace-stats">
           <div id="statsArea">
@@ -804,84 +887,21 @@
       state.autoRefresh = autoRefreshCheckbox.checked;
     });
 
-    // Custom boundaries checkbox event listener
-    const customBoundariesCheckbox = panel.querySelector(
-      "#customBoundariesCheckbox"
-    );
-    const boundaryInputs = panel.querySelector("#boundaryInputs");
-    const boundaryControls = panel.querySelector("#boundaryControls");
-    const defaultBoundariesInfo = panel.querySelector("#defaultBoundariesInfo");
+    // Coordinate capture button event listeners
+    const captureLeftUpperBtn = panel.querySelector("#captureLeftUpperBtn");
+    const captureRightBottomBtn = panel.querySelector("#captureRightBottomBtn");
+    const resetCoordinatesBtn = panel.querySelector("#resetCoordinatesBtn");
 
-    customBoundariesCheckbox.addEventListener("change", () => {
-      state.useCustomBoundaries = customBoundariesCheckbox.checked;
-
-      if (state.useCustomBoundaries) {
-        boundaryInputs.style.display = "grid";
-        boundaryControls.style.display = "flex";
-        defaultBoundariesInfo.style.display = "none";
-      } else {
-        boundaryInputs.style.display = "none";
-        boundaryControls.style.display = "none";
-        defaultBoundariesInfo.style.display = "block";
-        // Reset to default boundaries when unchecking
-        updateBoundaries(
-          CONFIG.BOUNDARIES.MIN_X,
-          CONFIG.BOUNDARIES.MAX_X,
-          CONFIG.BOUNDARIES.MIN_Y,
-          CONFIG.BOUNDARIES.MAX_Y
-        );
-      }
+    captureLeftUpperBtn.addEventListener("click", () => {
+      startCoordinateCapture("leftUpper");
     });
 
-    // Boundary controls event listeners
-    const minXInput = panel.querySelector("#minXInput");
-    const maxXInput = panel.querySelector("#maxXInput");
-    const minYInput = panel.querySelector("#minYInput");
-    const maxYInput = panel.querySelector("#maxYInput");
-    const applyBoundariesBtn = panel.querySelector("#applyBoundariesBtn");
-    const resetBoundariesBtn = panel.querySelector("#resetBoundariesBtn");
-
-    applyBoundariesBtn.addEventListener("click", () => {
-      const minX = parseInt(minXInput.value) || 0;
-      const maxX = parseInt(maxXInput.value) || 0;
-      const minY = parseInt(minYInput.value) || 0;
-      const maxY = parseInt(maxYInput.value) || 0;
-
-      const newBoundaries = updateBoundaries(minX, maxX, minY, maxY);
-
-      // Update input values to reflect validated boundaries
-      minXInput.value = newBoundaries.minX;
-      maxXInput.value = newBoundaries.maxX;
-      minYInput.value = newBoundaries.minY;
-      maxYInput.value = newBoundaries.maxY;
-
-      const message =
-        state.language === "pt"
-          ? `✅ Limites atualizados: X(${newBoundaries.minX}-${newBoundaries.maxX}) Y(${newBoundaries.minY}-${newBoundaries.maxY})`
-          : `✅ Boundaries updated: X(${newBoundaries.minX}-${newBoundaries.maxX}) Y(${newBoundaries.minY}-${newBoundaries.maxY})`;
-
-      updateUI(message, "success");
+    captureRightBottomBtn.addEventListener("click", () => {
+      startCoordinateCapture("rightBottom");
     });
 
-    resetBoundariesBtn.addEventListener("click", () => {
-      const defaultBoundaries = updateBoundaries(
-        CONFIG.BOUNDARIES.MIN_X,
-        CONFIG.BOUNDARIES.MAX_X,
-        CONFIG.BOUNDARIES.MIN_Y,
-        CONFIG.BOUNDARIES.MAX_Y
-      );
-
-      minXInput.value = defaultBoundaries.minX;
-      maxXInput.value = defaultBoundaries.maxX;
-      minYInput.value = defaultBoundaries.minY;
-      maxYInput.value = defaultBoundaries.maxY;
-
-      const message =
-        state.language === "pt"
-          ? "🔄 Limites resetados para padrão"
-          : "🔄 Boundaries reset to default";
-
-      updateUI(message, "default");
+    resetCoordinatesBtn.addEventListener("click", () => {
+      resetCoordinates();
     });
 
     window.addEventListener("beforeunload", () => {
@@ -910,21 +930,18 @@
           pixels: "Pixels",
           charges: "Cargas",
           level: "Level",
-          boundaries: "Limites",
         },
         en: {
           user: "User",
           pixels: "Pixels",
           charges: "Charges",
           level: "Level",
-          boundaries: "Boundaries",
         },
       }[state.language] || {
         user: "User",
         pixels: "Pixels",
         charges: "Charges",
         level: "Level",
-        boundaries: "Boundaries",
       };
 
       statsArea.innerHTML = `
@@ -954,16 +971,58 @@
           }</div>
           <div>${state.userInfo?.level || "0"}</div>
         </div>
-                 <div class="wplace-stat-item">
-           <div class="wplace-stat-label"><i class="fas fa-crop-alt"></i> ${
-             t.boundaries
-           }</div>
-           <div>${
-             state.useCustomBoundaries
-               ? `X:${state.boundaries.minX}-${state.boundaries.maxX} Y:${state.boundaries.minY}-${state.boundaries.maxY}`
-               : "Full canvas"
-           }</div>
-         </div>
+        <div class="wplace-stat-item">
+          <div class="wplace-stat-label"><i class="fas fa-crosshairs"></i> ${
+            state.language === "pt" ? "Área de Pintura" : "Painting Area"
+          }</div>
+          <div>${
+            state.capturedCoords.leftUpper && state.capturedCoords.rightBottom
+              ? `X(${Math.min(
+                  state.capturedCoords.leftUpper.x,
+                  state.capturedCoords.rightBottom.x
+                )}-${Math.max(
+                  state.capturedCoords.leftUpper.x,
+                  state.capturedCoords.rightBottom.x
+                )}) Y(${Math.min(
+                  state.capturedCoords.leftUpper.y,
+                  state.capturedCoords.rightBottom.y
+                )}-${Math.max(
+                  state.capturedCoords.leftUpper.y,
+                  state.capturedCoords.rightBottom.y
+                )})`
+              : "Default: Random 100x100"
+          }</div>
+        </div>
+        ${
+          state.capturedCoords.leftUpper || state.capturedCoords.rightBottom
+            ? `
+        <div class="wplace-stat-item">
+          <div class="wplace-stat-label"><i class="fas fa-map-marker-alt"></i> ${
+            state.language === "pt"
+              ? "Coordenadas Capturadas"
+              : "Captured Coordinates"
+          }</div>
+          <div style="font-size: 12px;">
+            ${
+              state.capturedCoords.leftUpper
+                ? `LU: ${state.capturedCoords.leftUpper.x},${state.capturedCoords.leftUpper.y}`
+                : ""
+            }
+            ${
+              state.capturedCoords.leftUpper && state.capturedCoords.rightBottom
+                ? "<br>"
+                : ""
+            }
+            ${
+              state.capturedCoords.rightBottom
+                ? `RD: ${state.capturedCoords.rightBottom.x},${state.capturedCoords.rightBottom.y}`
+                : ""
+            }
+          </div>
+        </div>
+        `
+            : ""
+        }
       `;
     }
   };
