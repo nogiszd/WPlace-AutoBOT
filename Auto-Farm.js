@@ -26,14 +26,15 @@
     language: "en",
     autoRefresh: true,
     pausedForManual: false,
-    // Coordinate capture state
-    selectingCoordinates: false,
-    capturingLeftUpper: false,
-    capturingRightBottom: false,
-    capturedCoords: {
-      leftUpper: null,
-      rightBottom: null,
+    // New coordinate system state
+    customCoords: false,
+    topLeft: { x: CONFIG.START_X, y: CONFIG.START_Y },
+    bottomRight: {
+      x: CONFIG.START_X + CONFIG.PIXELS_PER_LINE - 1,
+      y: CONFIG.START_Y + CONFIG.PIXELS_PER_LINE - 1,
     },
+    selectingCoords: false,
+    coordSelectionStep: 0, // 0: none, 1: selecting top-left, 2: selecting bottom-right
   };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -71,56 +72,6 @@
             paintLoop();
           }
         }
-
-        // Capture coordinates if we're in coordinate selection mode
-        if (
-          state.selectingCoordinates &&
-          payload.coords &&
-          Array.isArray(payload.coords)
-        ) {
-          const regionMatch = url.match(/\/pixel\/(\d+)\/(\d+)/);
-          if (regionMatch && regionMatch.length >= 3) {
-            const regionX = Number.parseInt(regionMatch[1]);
-            const regionY = Number.parseInt(regionMatch[2]);
-            const pixelX = payload.coords[0];
-            const pixelY = payload.coords[1];
-
-            // Calculate absolute coordinates
-            const absoluteX = regionX * 1000 + pixelX;
-            const absoluteY = regionY * 1000 + pixelY;
-
-            console.log(
-              `📍 Coordinates captured: X=${absoluteX}, Y=${absoluteY} (Region: ${regionX},${regionY}, Pixel: ${pixelX},${pixelY})`
-            );
-
-            // Store the coordinates based on which button was clicked
-            if (state.capturingLeftUpper) {
-              state.capturedCoords.leftUpper = { x: absoluteX, y: absoluteY };
-              updateUI(
-                state.language === "pt"
-                  ? `✅ Canto superior esquerdo capturado: X=${absoluteX}, Y=${absoluteY}`
-                  : `✅ Left upper corner captured: X=${absoluteX}, Y=${absoluteY}`,
-                "success"
-              );
-            } else if (state.capturingRightBottom) {
-              state.capturedCoords.rightBottom = { x: absoluteX, y: absoluteY };
-              updateUI(
-                state.language === "pt"
-                  ? `✅ Canto inferior direito capturado: X=${absoluteX}, Y=${absoluteY}`
-                  : `✅ Right bottom corner captured: X=${absoluteX}, Y=${absoluteY}`,
-                "success"
-              );
-            }
-
-            // Auto-fill boundary inputs if both coordinates are captured
-            if (
-              state.capturedCoords.leftUpper &&
-              state.capturedCoords.rightBottom
-            ) {
-              autoFillBoundaries();
-            }
-          }
-        }
       } catch (e) {}
     }
     return originalFetch(url, options);
@@ -139,152 +90,443 @@
   };
 
   const getRandomPosition = () => {
-    // Check if we have captured coordinates for custom area
-    if (state.capturedCoords.leftUpper && state.capturedCoords.rightBottom) {
-      const leftUpper = state.capturedCoords.leftUpper;
-      const rightBottom = state.capturedCoords.rightBottom;
+    if (state.customCoords) {
+      // Use custom coordinate boundaries (absolute world coordinates)
+      const minX = Math.min(state.topLeft.x, state.bottomRight.x);
+      const maxX = Math.max(state.topLeft.x, state.bottomRight.x);
+      const minY = Math.min(state.topLeft.y, state.bottomRight.y);
+      const maxY = Math.max(state.topLeft.y, state.bottomRight.y);
 
-      // Calculate the area dimensions
-      const minX = Math.min(leftUpper.x, rightBottom.x);
-      const maxX = Math.max(leftUpper.x, rightBottom.x);
-      const minY = Math.min(leftUpper.y, rightBottom.y);
-      const maxY = Math.max(leftUpper.y, rightBottom.y);
-
-      // Generate random position within the captured area
       return {
         x: Math.floor(Math.random() * (maxX - minX + 1)) + minX,
         y: Math.floor(Math.random() * (maxY - minY + 1)) + minY,
       };
     } else {
-      // Use default method: random within 100x100 area
+      // Use default behavior (original 100x100 area)
       return {
-        x: Math.floor(Math.random() * CONFIG.PIXELS_PER_LINE),
-        y: Math.floor(Math.random() * CONFIG.PIXELS_PER_LINE),
+        x: CONFIG.START_X + Math.floor(Math.random() * CONFIG.PIXELS_PER_LINE),
+        y: CONFIG.START_Y + Math.floor(Math.random() * CONFIG.PIXELS_PER_LINE),
       };
     }
   };
 
-  const startCoordinateCapture = (corner) => {
-    if (state.selectingCoordinates) {
-      updateUI(
-        state.language === "pt"
-          ? "❌ Já capturando coordenadas. Aguarde..."
-          : "❌ Already capturing coordinates. Please wait...",
-        "error"
-      );
-      return;
-    }
+  // Coordinate selection functions
+  const startCoordinateSelection = () => {
+    if (state.selectingCoords) return;
 
-    state.selectingCoordinates = true;
-    if (corner === "leftUpper") {
-      state.capturingLeftUpper = true;
-      state.capturingRightBottom = false;
-      updateUI(
-        state.language === "pt"
-          ? "📍 Clique em qualquer pixel para capturar o canto superior esquerdo..."
-          : "📍 Click any pixel to capture left upper corner...",
-        "default"
-      );
-    } else if (corner === "rightBottom") {
-      state.capturingRightBottom = true;
-      state.capturingLeftUpper = false;
-      updateUI(
-        state.language === "pt"
-          ? "📍 Clique em qualquer pixel para capturar o canto inferior direito..."
-          : "📍 Click any pixel to capture right bottom corner...",
-        "default"
-      );
-    }
+    state.selectingCoords = true;
+    state.coordSelectionStep = 1;
+    state.topLeft = { x: CONFIG.START_X, y: CONFIG.START_Y };
+    state.bottomRight = {
+      x: CONFIG.START_X + CONFIG.PIXELS_PER_LINE - 1,
+      y: CONFIG.START_Y + CONFIG.PIXELS_PER_LINE - 1,
+    };
 
-    // Set a timeout to stop coordinate capture
-    setTimeout(() => {
-      if (state.selectingCoordinates) {
-        state.selectingCoordinates = false;
-        state.capturingLeftUpper = false;
-        state.capturingRightBottom = false;
-        updateUI(
+    const message =
+      state.language === "pt"
+        ? "🎯 Clique no canto superior esquerdo da área desejada..."
+        : "🎯 Click on the top-left corner of the desired area...";
+
+    updateUI(message, "status");
+    showCoordinateSelectionStatus(message);
+
+    // Enable canvas click detection
+    enableCanvasClickDetection();
+
+    // Add timeout for coordinate selection (2 minutes)
+    state.coordSelectionTimeout = setTimeout(() => {
+      if (state.selectingCoords) {
+        const timeoutMessage =
           state.language === "pt"
-            ? "⏰ Tempo esgotado para captura de coordenadas"
-            : "⏰ Timeout for coordinate capture",
-          "error"
-        );
+            ? "⏰ Tempo esgotado para seleção de coordenadas"
+            : "⏰ Timeout for coordinate selection";
+        updateUI(timeoutMessage, "error");
+        cancelCoordinateSelection();
       }
-    }, 60000); // 1 minute timeout
+    }, 120000);
   };
 
-  const autoFillBoundaries = () => {
-    if (!state.capturedCoords.leftUpper || !state.capturedCoords.rightBottom) {
+  const enableCanvasClickDetection = () => {
+    const canvas = document.querySelector("canvas");
+    if (!canvas) {
+      const errorMessage =
+        state.language === "pt"
+          ? "❌ Canvas não encontrado. Abra a página de pintura primeiro."
+          : "❌ Canvas not found. Please open the paint page first.";
+
+      updateUI(errorMessage, "error");
+      hideCoordinateSelectionStatus();
+      state.selectingCoords = false;
+      state.coordSelectionStep = 0;
       return;
     }
 
-    const leftUpper = state.capturedCoords.leftUpper;
-    const rightBottom = state.capturedCoords.rightBottom;
+    // Check if canvas is visible and has proper dimensions
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) {
+      const errorMessage =
+        state.language === "pt"
+          ? "❌ Canvas não está visível ou não tem dimensões válidas"
+          : "❌ Canvas is not visible or has invalid dimensions";
 
-    // Calculate area dimensions
-    const minX = Math.min(leftUpper.x, rightBottom.x);
-    const maxX = Math.max(leftUpper.x, rightBottom.x);
-    const minY = Math.min(leftUpper.y, rightBottom.y);
-    const maxY = Math.max(leftUpper.y, rightBottom.y);
+      updateUI(errorMessage, "error");
+      hideCoordinateSelectionStatus();
+      state.selectingCoords = false;
+      state.coordSelectionStep = 0;
+      return;
+    }
 
-    updateUI(
-      state.language === "pt"
-        ? `✅ Área de pintura definida: X(${minX}-${maxX}) Y(${minY}-${maxY})`
-        : `✅ Painting area defined: X(${minX}-${maxX}) Y(${minY}-${maxY})`,
-      "success"
-    );
+    const handleCanvasClick = (e) => {
+      if (!state.selectingCoords) return;
 
-    // Reset coordinate capture state
-    state.selectingCoordinates = false;
-    state.capturingLeftUpper = false;
-    state.capturingRightBottom = false;
+      const rect = canvas.getBoundingClientRect();
+      const canvasX = Math.floor(
+        (e.clientX - rect.left) / (rect.width / CONFIG.PIXELS_PER_LINE)
+      );
+      const canvasY = Math.floor(
+        (e.clientY - rect.top) / (rect.height / CONFIG.PIXELS_PER_LINE)
+      );
 
-    // Update the coordinate info display
-    updateCoordinateInfo();
+      // Clamp canvas coordinates to valid range (0-99)
+      const clampedCanvasX = Math.max(
+        0,
+        Math.min(CONFIG.PIXELS_PER_LINE - 1, canvasX)
+      );
+      const clampedCanvasY = Math.max(
+        0,
+        Math.min(CONFIG.PIXELS_PER_LINE - 1, canvasY)
+      );
+
+      // Convert canvas coordinates to absolute world coordinates
+      const worldX = CONFIG.START_X + clampedCanvasX;
+      const worldY = CONFIG.START_Y + clampedCanvasY;
+
+      if (state.coordSelectionStep === 1) {
+        // Selecting top-left corner
+        state.topLeft = { x: worldX, y: worldY };
+        state.coordSelectionStep = 2;
+
+        const message =
+          state.language === "pt"
+            ? `📍 Canto superior esquerdo definido em (${worldX}, ${worldY}). Agora clique no canto inferior direito...`
+            : `📍 Top-left corner set at (${worldX}, ${worldY}). Now click on the bottom-right corner...`;
+
+        updateUI(message, "status");
+        showCoordinateSelectionStatus(message);
+      } else if (state.coordSelectionStep === 2) {
+        // Selecting bottom-right corner
+        state.bottomRight = { x: worldX, y: worldY };
+        state.coordSelectionStep = 0;
+        state.selectingCoords = false;
+        state.customCoords = true;
+
+        // Clear timeout
+        if (state.coordSelectionTimeout) {
+          clearTimeout(state.coordSelectionTimeout);
+          state.coordSelectionTimeout = null;
+        }
+
+        // Ensure proper ordering
+        if (state.topLeft.x > state.bottomRight.x) {
+          [state.topLeft.x, state.bottomRight.x] = [
+            state.bottomRight.x,
+            state.topLeft.x,
+          ];
+        }
+        if (state.topLeft.y > state.bottomRight.y) {
+          [state.topLeft.y, state.bottomRight.y] = [
+            state.bottomRight.y,
+            state.topLeft.y,
+          ];
+        }
+
+        // Check if the selected area is too small
+        const areaWidth = state.bottomRight.x - state.topLeft.x + 1;
+        const areaHeight = state.bottomRight.y - state.topLeft.y + 1;
+        if (areaWidth < 5 || areaHeight < 5) {
+          const warningMessage =
+            state.language === "pt"
+              ? "⚠️ Área selecionada é muito pequena. Considere selecionar uma área maior."
+              : "⚠️ Selected area is very small. Consider selecting a larger area.";
+          updateUI(warningMessage, "warning");
+        }
+
+        const successMessage =
+          state.language === "pt"
+            ? `✅ Área definida: (${state.topLeft.x}, ${state.topLeft.y}) até (${state.bottomRight.x}, ${state.bottomRight.y})`
+            : `✅ Area defined: (${state.topLeft.x}, ${state.topLeft.y}) to (${state.bottomRight.x}, ${state.bottomRight.y})`;
+
+        updateUI(successMessage, "success");
+        hideCoordinateSelectionStatus();
+
+        // Remove click listener
+        canvas.removeEventListener("click", handleCanvasClick);
+
+        // Save preferences and update UI
+        saveCoordinatePreferences();
+        updateCoordinateUI();
+      }
+    };
+
+    canvas.addEventListener("click", handleCanvasClick);
+
+    // Add visual feedback
+    canvas.style.cursor = "crosshair";
+    canvas.style.border = "2px solid #00ff00";
   };
 
   const resetCoordinates = () => {
-    state.capturedCoords.leftUpper = null;
-    state.capturedCoords.rightBottom = null;
+    state.customCoords = false;
+    state.topLeft = { x: CONFIG.START_X, y: CONFIG.START_Y };
+    state.bottomRight = {
+      x: CONFIG.START_X + CONFIG.PIXELS_PER_LINE - 1,
+      y: CONFIG.START_Y + CONFIG.PIXELS_PER_LINE - 1,
+    };
+    state.selectingCoords = false;
+    state.coordSelectionStep = 0;
 
-    updateUI(
+    // Clear timeout if it exists
+    if (state.coordSelectionTimeout) {
+      clearTimeout(state.coordSelectionTimeout);
+      state.coordSelectionTimeout = null;
+    }
+
+    // Reset canvas styling
+    const canvas = document.querySelector("canvas");
+    if (canvas) {
+      canvas.style.cursor = "";
+      canvas.style.border = "";
+    }
+
+    const message =
       state.language === "pt"
-        ? "🔄 Coordenadas resetadas para padrão (100x100)"
-        : "🔄 Coordinates reset to default (100x100)",
-      "default"
-    );
+        ? "🔄 Coordenadas resetadas para o comportamento padrão"
+        : "🔄 Coordinates reset to default behavior";
 
-    // Update the coordinate info display
-    updateCoordinateInfo();
+    updateUI(message, "default");
+    hideCoordinateSelectionStatus();
+
+    // Save preferences and update UI
+    saveCoordinatePreferences();
+    updateCoordinateUI();
   };
 
-  const updateCoordinateInfo = () => {
-    const coordinateInfo = document.querySelector("#coordinateInfo");
-    if (coordinateInfo) {
-      if (state.capturedCoords.leftUpper && state.capturedCoords.rightBottom) {
-        const leftUpper = state.capturedCoords.leftUpper;
-        const rightBottom = state.capturedCoords.rightBottom;
-        const minX = Math.min(leftUpper.x, rightBottom.x);
-        const maxX = Math.max(leftUpper.x, rightBottom.x);
-        const minY = Math.min(leftUpper.y, rightBottom.y);
-        const maxY = Math.max(leftUpper.y, rightBottom.y);
+  const cancelCoordinateSelection = () => {
+    if (!state.selectingCoords) return;
 
-        coordinateInfo.innerHTML = `${
-          state.language === "pt" ? "Área de Pintura" : "Painting Area"
-        }: X(${minX}-${maxX}) Y(${minY}-${maxY})`;
+    state.selectingCoords = false;
+    state.coordSelectionStep = 0;
+
+    // Clear timeout if it exists
+    if (state.coordSelectionTimeout) {
+      clearTimeout(state.coordSelectionTimeout);
+      state.coordSelectionTimeout = null;
+    }
+
+    // Reset canvas styling
+    const canvas = document.querySelector("canvas");
+    if (canvas) {
+      canvas.style.cursor = "";
+      canvas.style.border = "";
+    }
+
+    const message =
+      state.language === "pt"
+        ? "❌ Seleção de coordenadas cancelada"
+        : "❌ Coordinate selection cancelled";
+
+    updateUI(message, "default");
+    hideCoordinateSelectionStatus();
+  };
+
+  // Add escape key listener for coordinate selection
+  const addEscapeKeyListener = () => {
+    const handleEscape = (e) => {
+      if (e.key === "Escape" && state.selectingCoords) {
+        cancelCoordinateSelection();
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+
+    // Return cleanup function
+    return () => document.removeEventListener("keydown", handleEscape);
+  };
+
+  // Show/hide coordinate selection status
+  const showCoordinateSelectionStatus = (message) => {
+    const statusDiv = document.querySelector("#coordSelectionStatus");
+    const textSpan = document.querySelector("#coordSelectionText");
+    if (statusDiv && textSpan) {
+      textSpan.textContent = message;
+      statusDiv.style.display = "block";
+    }
+  };
+
+  const hideCoordinateSelectionStatus = () => {
+    const statusDiv = document.querySelector("#coordSelectionStatus");
+    if (statusDiv) {
+      statusDiv.style.display = "none";
+    }
+  };
+
+  const updateCoordinateUI = () => {
+    const coordInfo = document.querySelector("#coordInfo");
+    if (coordInfo) {
+      if (state.customCoords) {
+        coordInfo.className = "wplace-coord-info custom";
+        coordInfo.innerHTML = `
+          <div class="wplace-stat-item">
+            <div class="wplace-stat-label">
+              <i class="fas fa-map-marker-alt"></i> 
+              ${state.language === "pt" ? "Área Personalizada" : "Custom Area"}
+            </div>
+            <div style="font-size: 12px; opacity: 0.8;">
+              (${state.topLeft.x}, ${state.topLeft.y}) → (${
+          state.bottomRight.x
+        }, ${state.bottomRight.y})
+            </div>
+          </div>
+        `;
       } else {
-        coordinateInfo.innerHTML = "Default: Random 100x100 area";
+        coordInfo.className = "wplace-coord-info";
+        coordInfo.innerHTML = `
+          <div class="wplace-stat-item">
+            <div class="wplace-stat-label">
+              <i class="fas fa-globe"></i> 
+              ${state.language === "pt" ? "Área Padrão" : "Default Area"}
+            </div>
+            <div style="font-size: 12px; opacity: 0.8;">
+              ${CONFIG.START_X},${CONFIG.START_Y} → ${
+          CONFIG.START_X + CONFIG.PIXELS_PER_LINE - 1
+        },${CONFIG.START_Y + CONFIG.PIXELS_PER_LINE - 1}
+            </div>
+          </div>
+        `;
       }
     }
+  };
+
+  // Save and load coordinate preferences
+  const saveCoordinatePreferences = () => {
+    try {
+      const preferences = {
+        customCoords: state.customCoords,
+        topLeft: state.topLeft,
+        bottomRight: state.bottomRight,
+      };
+      localStorage.setItem("wplace-farm-coords", JSON.stringify(preferences));
+    } catch (e) {
+      console.warn("Failed to save coordinate preferences:", e);
+    }
+  };
+
+  const loadCoordinatePreferences = () => {
+    try {
+      const saved = localStorage.getItem("wplace-farm-coords");
+      if (saved) {
+        const preferences = JSON.parse(saved);
+        if (
+          preferences.customCoords &&
+          preferences.topLeft &&
+          preferences.bottomRight
+        ) {
+          // Validate coordinates are within reasonable bounds
+          const minValidX = CONFIG.START_X - 1000; // Allow some flexibility
+          const maxValidX = CONFIG.START_X + 1000;
+          const minValidY = CONFIG.START_Y - 1000;
+          const maxValidY = CONFIG.START_Y + 1000;
+
+          if (
+            preferences.topLeft.x >= minValidX &&
+            preferences.topLeft.x <= maxValidX &&
+            preferences.topLeft.y >= minValidY &&
+            preferences.topLeft.y <= maxValidY &&
+            preferences.bottomRight.x >= minValidX &&
+            preferences.bottomRight.x <= maxValidX &&
+            preferences.bottomRight.y >= minValidY &&
+            preferences.bottomRight.y <= maxValidY
+          ) {
+            state.customCoords = preferences.customCoords;
+            state.topLeft = preferences.topLeft;
+            state.bottomRight = preferences.bottomRight;
+
+            // Ensure proper ordering
+            if (state.topLeft.x > state.bottomRight.x) {
+              [state.topLeft.x, state.bottomRight.x] = [
+                state.bottomRight.x,
+                state.topLeft.x,
+              ];
+            }
+            if (state.topLeft.y > state.bottomRight.y) {
+              [state.topLeft.y, state.bottomRight.y] = [
+                state.bottomRight.y,
+                state.topLeft.y,
+              ];
+            }
+          } else {
+            console.warn("Saved coordinates are out of bounds, using defaults");
+            // Reset to defaults if coordinates are invalid
+            state.customCoords = false;
+            state.topLeft = { x: CONFIG.START_X, y: CONFIG.START_Y };
+            state.bottomRight = {
+              x: CONFIG.START_X + CONFIG.PIXELS_PER_LINE - 1,
+              y: CONFIG.START_Y + CONFIG.PIXELS_PER_LINE - 1,
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load coordinate preferences:", e);
+      // Reset to defaults on error
+      state.customCoords = false;
+      state.topLeft = { x: CONFIG.START_X, y: CONFIG.START_Y };
+      state.bottomRight = {
+        x: CONFIG.START_X + CONFIG.PIXELS_PER_LINE - 1,
+        y: CONFIG.START_Y + CONFIG.PIXELS_PER_LINE - 1,
+      };
+    }
+  };
+
+  // Enhanced coordinate validation
+  const validateCoordinates = (x, y) => {
+    if (state.customCoords) {
+      return (
+        x >= state.topLeft.x &&
+        x <= state.bottomRight.x &&
+        y >= state.topLeft.y &&
+        y <= state.bottomRight.y
+      );
+    }
+    return (
+      x >= 0 &&
+      x < CONFIG.PIXELS_PER_LINE &&
+      y >= 0 &&
+      y < CONFIG.PIXELS_PER_LINE
+    );
   };
 
   const paintPixel = async (x, y) => {
     const randomColor = Math.floor(Math.random() * 31) + 1;
-    const url = `https://backend.wplace.live/s0/pixel/${CONFIG.START_X}/${CONFIG.START_Y}`;
+
+    // x and y are now absolute world coordinates
+    const absX = x;
+    const absY = y;
+
+    // Calculate which region this pixel belongs to (regions are 1000x1000)
+    const regionX = Math.floor(absX / 1000);
+    const regionY = Math.floor(absY / 1000);
+
+    // Calculate pixel position within the region (0-999)
+    const pixelX = absX % 1000;
+    const pixelY = absY % 1000;
+
+    const url = `https://backend.wplace.live/s0/pixel/${regionX}/${regionY}`;
     const payload = JSON.stringify({
-      coords: [x, y],
+      coords: [pixelX, pixelY],
       colors: [randomColor],
       t: capturedCaptchaToken,
     });
+
     try {
       const res = await originalFetch(url, {
         method: "POST",
@@ -600,6 +842,21 @@
         background: ${CONFIG.THEME.error};
         color: white;
       }
+      .wplace-coord-controls {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .wplace-coord-info {
+        background: ${CONFIG.THEME.secondary};
+        padding: 12px;
+        border-radius: 6px;
+        margin-bottom: 10px;
+        border-left: 3px solid ${CONFIG.THEME.highlight};
+      }
+      .wplace-coord-info.custom {
+        border-left-color: ${CONFIG.THEME.success};
+      }
       .wplace-stats {
         background: ${CONFIG.THEME.secondary};
         padding: 12px;
@@ -644,27 +901,6 @@
         pointer-events: none;
         border-radius: 8px;
       }
-      .wplace-coordinates {
-        background: ${CONFIG.THEME.secondary};
-        padding: 12px;
-        border-radius: 6px;
-        margin-bottom: 15px;
-      }
-      .wplace-coordinates-header {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 10px;
-        font-weight: 600;
-        color: ${CONFIG.THEME.highlight};
-      }
-      .wplace-coordinate-capture {
-        margin-bottom: 15px;
-      }
-      .wplace-coordinate-capture .wplace-btn {
-        padding: 8px;
-        font-size: 12px;
-      }
     `;
     document.head.appendChild(style);
 
@@ -678,11 +914,6 @@
         pixels: "Pixels",
         charges: "Cargas",
         level: "Level",
-        captureLeftUpper: "Capturar Canto Superior Esquerdo",
-        captureRightBottom: "Capturar Canto Inferior Direito",
-        coordinateCapture: "Captura de Coordenadas",
-        resetCoordinates: "Resetar Coordenadas",
-        paintingArea: "Área de Pintura",
       },
       en: {
         title: "WPlace Auto-Farm",
@@ -693,11 +924,6 @@
         pixels: "Pixels",
         charges: "Charges",
         level: "Level",
-        captureLeftUpper: "Capture Left Upper Corner",
-        captureRightBottom: "Capture Right Bottom Corner",
-        coordinateCapture: "Coordinate Capture",
-        resetCoordinates: "Reset Coordinates",
-        paintingArea: "Painting Area",
       },
     };
 
@@ -734,47 +960,39 @@
           </label>
         </div>
         
-        <div class="wplace-coordinates">
-          <div class="wplace-coordinates-header">
+        <div class="wplace-controls" style="margin-bottom: 10px;">
+          <button id="selectCoordsBtn" class="wplace-btn wplace-btn-primary" style="flex: 0.6;">
             <i class="fas fa-crosshairs"></i>
-            <span>${t.coordinateCapture}</span>
-          </div>
-          
-          <div class="wplace-coordinate-capture" style="margin-bottom: 15px;">
-            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-              <button id="captureLeftUpperBtn" class="wplace-btn" style="flex: 1; padding: 8px; font-size: 12px;">
-                <i class="fas fa-arrow-up-left"></i>
-                <span>${t.captureLeftUpper}</span>
-              </button>
-              <button id="captureRightBottomBtn" class="wplace-btn" style="flex: 1; padding: 8px; font-size: 12px;">
-                <i class="fas fa-arrow-down-right"></i>
-                <span>${t.captureRightBottom}</span>
-              </button>
+            <span>${
+              state.language === "pt" ? "Selecionar Área" : "Select Area"
+            }</span>
+          </button>
+          <button id="resetCoordsBtn" class="wplace-btn wplace-btn-stop" style="flex: 0.4;">
+            <i class="fas fa-undo"></i>
+            <span>${state.language === "pt" ? "Reset" : "Reset"}</span>
+          </button>
+        </div>
+        
+        <div id="coordSelectionStatus" style="display: none; margin-bottom: 10px; padding: 8px; background: rgba(255, 255, 0, 0.1); border-radius: 4px; text-align: center; font-size: 12px; color: #ffcc00;">
+          <i class="fas fa-clock"></i> 
+          <span id="coordSelectionText">${
+            state.language === "pt"
+              ? "Selecionando coordenadas..."
+              : "Selecting coordinates..."
+          }</span>
+        </div>
+        
+        <div id="coordInfo" class="wplace-coord-info">
+          <div class="wplace-stat-item">
+            <div class="wplace-stat-label">
+              <i class="fas fa-globe"></i> 
+              ${state.language === "pt" ? "Área Padrão" : "Default Area"}
             </div>
-            <button id="resetCoordinatesBtn" class="wplace-btn" style="width: 100%; padding: 8px; font-size: 12px;">
-              <i class="fas fa-undo"></i>
-              <span>${t.resetCoordinates}</span>
-            </button>
-          </div>
-          
-          <div id="coordinateInfo" style="text-align: center; padding: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; font-size: 12px; opacity: 0.8;">
-            ${
-              state.capturedCoords.leftUpper && state.capturedCoords.rightBottom
-                ? `${t.paintingArea}: X(${Math.min(
-                    state.capturedCoords.leftUpper.x,
-                    state.capturedCoords.rightBottom.x
-                  )}-${Math.max(
-                    state.capturedCoords.leftUpper.x,
-                    state.capturedCoords.rightBottom.x
-                  )}) Y(${Math.min(
-                    state.capturedCoords.leftUpper.y,
-                    state.capturedCoords.rightBottom.y
-                  )}-${Math.max(
-                    state.capturedCoords.leftUpper.y,
-                    state.capturedCoords.rightBottom.y
-                  )})`
-                : "Default: Random 100x100 area"
-            }
+            <div style="font-size: 12px; opacity: 0.8;">
+              ${CONFIG.START_X},${CONFIG.START_Y} → ${
+      CONFIG.START_X + CONFIG.PIXELS_PER_LINE - 1
+    },${CONFIG.START_Y + CONFIG.PIXELS_PER_LINE - 1}
+            </div>
           </div>
         </div>
         
@@ -836,6 +1054,10 @@
     const statusText = panel.querySelector("#statusText");
     const content = panel.querySelector(".wplace-content");
     const statsArea = panel.querySelector("#statsArea");
+    const selectCoordsBtn = panel.querySelector("#selectCoordsBtn");
+    const resetCoordsBtn = panel.querySelector("#resetCoordsBtn");
+    const coordSelectionStatus = panel.querySelector("#coordSelectionStatus");
+    const coordSelectionText = panel.querySelector("#coordSelectionText");
 
     toggleBtn.addEventListener("click", () => {
       state.running = !state.running;
@@ -861,6 +1083,21 @@
             : "🚀 Painting started!",
           "success"
         );
+
+        // Show coordinate area info if custom coordinates are set
+        if (state.customCoords) {
+          const areaInfo =
+            state.language === "pt"
+              ? ` (Área: ${state.topLeft.x},${state.topLeft.y} → ${state.bottomRight.x},${state.bottomRight.y})`
+              : ` (Area: ${state.topLeft.x},${state.topLeft.y} → ${state.bottomRight.x},${state.bottomRight.y})`;
+          updateUI(
+            (state.language === "pt"
+              ? "🚀 Pintura iniciada!"
+              : "🚀 Painting started!") + areaInfo,
+            "success"
+          );
+        }
+
         paintLoop();
       } else {
         toggleBtn.innerHTML = `<i class="fas fa-play"></i> <span>${t.start}</span>`;
@@ -874,6 +1111,33 @@
       }
     });
 
+    // Coordinate control button event listeners
+    selectCoordsBtn.addEventListener("click", () => {
+      if (state.running) {
+        updateUI(
+          state.language === "pt"
+            ? "❌ Pare a pintura antes de selecionar coordenadas"
+            : "❌ Stop painting before selecting coordinates",
+          "error"
+        );
+        return;
+      }
+      startCoordinateSelection();
+    });
+
+    resetCoordsBtn.addEventListener("click", () => {
+      if (state.running) {
+        updateUI(
+          state.language === "pt"
+            ? "❌ Pare a pintura antes de resetar coordenadas"
+            : "❌ Stop painting before resetting coordinates",
+          "error"
+        );
+        return;
+      }
+      resetCoordinates();
+    });
+
     minimizeBtn.addEventListener("click", () => {
       state.minimized = !state.minimized;
       content.style.display = state.minimized ? "none" : "block";
@@ -885,23 +1149,6 @@
     const autoRefreshCheckbox = panel.querySelector("#autoRefreshCheckbox");
     autoRefreshCheckbox.addEventListener("change", () => {
       state.autoRefresh = autoRefreshCheckbox.checked;
-    });
-
-    // Coordinate capture button event listeners
-    const captureLeftUpperBtn = panel.querySelector("#captureLeftUpperBtn");
-    const captureRightBottomBtn = panel.querySelector("#captureRightBottomBtn");
-    const resetCoordinatesBtn = panel.querySelector("#resetCoordinatesBtn");
-
-    captureLeftUpperBtn.addEventListener("click", () => {
-      startCoordinateCapture("leftUpper");
-    });
-
-    captureRightBottomBtn.addEventListener("click", () => {
-      startCoordinateCapture("rightBottom");
-    });
-
-    resetCoordinatesBtn.addEventListener("click", () => {
-      resetCoordinates();
     });
 
     window.addEventListener("beforeunload", () => {
@@ -930,19 +1177,34 @@
           pixels: "Pixels",
           charges: "Cargas",
           level: "Level",
+          area: "Área Ativa",
         },
         en: {
           user: "User",
           pixels: "Pixels",
           charges: "Charges",
           level: "Level",
+          area: "Active Area",
         },
       }[state.language] || {
         user: "User",
         pixels: "Pixels",
         charges: "Charges",
         level: "Level",
+        area: "Active Area",
       };
+
+      let areaInfo = "";
+      if (state.customCoords) {
+        areaInfo = `
+          <div class="wplace-stat-item">
+            <div class="wplace-stat-label"><i class="fas fa-map-marker-alt"></i> ${t.area}</div>
+            <div style="font-size: 12px; opacity: 0.8;">
+              (${state.topLeft.x}, ${state.topLeft.y}) → (${state.bottomRight.x}, ${state.bottomRight.y})
+            </div>
+          </div>
+        `;
+      }
 
       statsArea.innerHTML = `
         <div class="wplace-stat-item">
@@ -971,58 +1233,7 @@
           }</div>
           <div>${state.userInfo?.level || "0"}</div>
         </div>
-        <div class="wplace-stat-item">
-          <div class="wplace-stat-label"><i class="fas fa-crosshairs"></i> ${
-            state.language === "pt" ? "Área de Pintura" : "Painting Area"
-          }</div>
-          <div>${
-            state.capturedCoords.leftUpper && state.capturedCoords.rightBottom
-              ? `X(${Math.min(
-                  state.capturedCoords.leftUpper.x,
-                  state.capturedCoords.rightBottom.x
-                )}-${Math.max(
-                  state.capturedCoords.leftUpper.x,
-                  state.capturedCoords.rightBottom.x
-                )}) Y(${Math.min(
-                  state.capturedCoords.leftUpper.y,
-                  state.capturedCoords.rightBottom.y
-                )}-${Math.max(
-                  state.capturedCoords.leftUpper.y,
-                  state.capturedCoords.rightBottom.y
-                )})`
-              : "Default: Random 100x100"
-          }</div>
-        </div>
-        ${
-          state.capturedCoords.leftUpper || state.capturedCoords.rightBottom
-            ? `
-        <div class="wplace-stat-item">
-          <div class="wplace-stat-label"><i class="fas fa-map-marker-alt"></i> ${
-            state.language === "pt"
-              ? "Coordenadas Capturadas"
-              : "Captured Coordinates"
-          }</div>
-          <div style="font-size: 12px;">
-            ${
-              state.capturedCoords.leftUpper
-                ? `LU: ${state.capturedCoords.leftUpper.x},${state.capturedCoords.leftUpper.y}`
-                : ""
-            }
-            ${
-              state.capturedCoords.leftUpper && state.capturedCoords.rightBottom
-                ? "<br>"
-                : ""
-            }
-            ${
-              state.capturedCoords.rightBottom
-                ? `RD: ${state.capturedCoords.rightBottom.x},${state.capturedCoords.rightBottom.y}`
-                : ""
-            }
-          </div>
-        </div>
-        `
-            : ""
-        }
+        ${areaInfo}
       `;
     }
   };
@@ -1031,4 +1242,8 @@
   createUI();
   await getCharge();
   updateStats();
+
+  // Load coordinate preferences and update UI
+  loadCoordinatePreferences();
+  updateCoordinateUI();
 })();
