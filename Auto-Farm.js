@@ -916,12 +916,14 @@
           pixels: "Pixels",
           charges: "Cargas",
           level: "Level",
+          boundaries: "Limites",
         },
         en: {
           user: "User",
           pixels: "Pixels",
           charges: "Charges",
           level: "Level",
+          boundaries: "Boundaries",
         },
       }[state.language] || {
         user: "User",
