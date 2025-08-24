@@ -930,6 +930,7 @@
         pixels: "Pixels",
         charges: "Charges",
         level: "Level",
+        boundaries: "Boundaries",
       };
 
       statsArea.innerHTML = `
